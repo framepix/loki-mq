@@ -12,6 +12,20 @@ TEST_CASE("hex encoding/decoding", "[encoding][decoding][hex]") {
     REQUIRE_FALSE( lokimq::is_hex("1234567890abcdefABCDEF1234567890aGcdefABCDEF") );
     REQUIRE_FALSE( lokimq::is_hex("1234567890abcdefABCDEF1234567890agcdefABCDEF") );
     REQUIRE_FALSE( lokimq::is_hex("\x11\xff") );
+
+    REQUIRE( lokimq::from_hex(pk_hex) == pk );
+    REQUIRE( lokimq::to_hex(pk) == pk_hex );
+
+    std::vector<std::byte> bytes{{std::byte{0xff}, std::byte{0x42}, std::byte{0x12}, std::byte{0x34}}};
+    std::basic_string_view<std::byte> b{bytes.data(), bytes.size()};
+    REQUIRE( lokimq::to_hex(b) == "ff421234"s );
+
+    bytes.resize(8);
+    bytes[0] = std::byte{'f'}; bytes[1] = std::byte{'f'}; bytes[2] = std::byte{'4'}; bytes[3] = std::byte{'2'};
+    bytes[4] = std::byte{'1'}; bytes[5] = std::byte{'2'}; bytes[6] = std::byte{'3'}; bytes[7] = std::byte{'4'};
+    std::basic_string_view<std::byte> hex_bytes{bytes.data(), bytes.size()};
+    REQUIRE( lokimq::is_hex(hex_bytes) );
+    REQUIRE( lokimq::from_hex(hex_bytes) == "\xff\x42\x12\x34" );
 }
 
 TEST_CASE("base32z encoding/decoding", "[encoding][decoding][base32z]") {
@@ -49,4 +63,99 @@ TEST_CASE("base32z encoding/decoding", "[encoding][decoding][base32z]") {
     REQUIRE( lokimq::from_base32z("ybndrf4") == "\x00\x44\x32\x17"s );
     // This one won't round-trip to the same value since it has ignored garbage bytes at the end
     REQUIRE( lokimq::to_base32z(lokimq::from_base32z("ybndrf4"s)) == "ybndrfa" );
+
+    REQUIRE( lokimq::to_base32z(pk) == pk_b32z );
+    REQUIRE( lokimq::from_base32z(pk_b32z) == pk );
+
+    std::vector<std::byte> bytes{{std::byte{0}, std::byte{255}}};
+    std::basic_string_view<std::byte> b{bytes.data(), bytes.size()};
+    REQUIRE( lokimq::to_base32z(b) == "yd9o" );
+
+    bytes.resize(4);
+    bytes[0] = std::byte{'y'}; bytes[1] = std::byte{'d'}; bytes[2] = std::byte{'9'}; bytes[3] = std::byte{'o'};
+    std::basic_string_view<std::byte> b32_bytes{bytes.data(), bytes.size()};
+    REQUIRE( lokimq::is_base32z(b32_bytes) );
+    REQUIRE( lokimq::from_base32z(b32_bytes) == "\x00\xff"sv );
+}
+
+TEST_CASE("base64 encoding/decoding", "[encoding][decoding][base64]") {
+    // 00000000 00000000 00000000 -> 000000 000000 000000 000000
+    REQUIRE( lokimq::to_base64("\0\0\0"s) == "AAAA" );
+    // 00000001 00000002 00000003 -> 000000 010000 000200 000003
+    REQUIRE( lokimq::to_base64("\x01\x02\x03"s) == "AQID" );
+    REQUIRE( lokimq::to_base64("\0\0\0\0"s) == "AAAAAA==" );
+    // 00000000 00000000 00000000  11111111 ->
+    // 000000 000000 000000 000000 111111 110000 (pad) (pad)
+    REQUIRE( lokimq::to_base64("a")   == "YQ==" );
+    REQUIRE( lokimq::to_base64("ab")  == "YWI=" );
+    REQUIRE( lokimq::to_base64("abc") == "YWJj" );
+    REQUIRE( lokimq::to_base64("abcd")   == "YWJjZA==" );
+    REQUIRE( lokimq::to_base64("abcde")  == "YWJjZGU=" );
+    REQUIRE( lokimq::to_base64("abcdef") == "YWJjZGVm" );
+
+    REQUIRE( lokimq::to_base64("\0\0\0\xff"s) == "AAAA/w==" );
+    REQUIRE( lokimq::to_base64("\0\0\0\xff\xff"s) == "AAAA//8=" );
+    REQUIRE( lokimq::to_base64("\0\0\0\xff\xff\xff"s) == "AAAA////" );
+    REQUIRE( lokimq::to_base64(
+            "Man is distinguished, not only by his reason, but by this singular passion from other "
+            "animals, which is a lust of the mind, that by a perseverance of delight in the "
+            "continued and indefatigable generation of knowledge, exceeds the short vehemence of "
+            "any carnal pleasure.")
+            ==
+            "TWFuIGlzIGRpc3Rpbmd1aXNoZWQsIG5vdCBvbmx5IGJ5IGhpcyByZWFzb24sIGJ1dCBieSB0aGlz"
+            "IHNpbmd1bGFyIHBhc3Npb24gZnJvbSBvdGhlciBhbmltYWxzLCB3aGljaCBpcyBhIGx1c3Qgb2Yg"
+            "dGhlIG1pbmQsIHRoYXQgYnkgYSBwZXJzZXZlcmFuY2Ugb2YgZGVsaWdodCBpbiB0aGUgY29udGlu"
+            "dWVkIGFuZCBpbmRlZmF0aWdhYmxlIGdlbmVyYXRpb24gb2Yga25vd2xlZGdlLCBleGNlZWRzIHRo"
+            "ZSBzaG9ydCB2ZWhlbWVuY2Ugb2YgYW55IGNhcm5hbCBwbGVhc3VyZS4=" );
+
+    REQUIRE( lokimq::from_base64("A+/A") == "\x03\xef\xc0" );
+    REQUIRE( lokimq::from_base64("YWJj") == "abc" );
+    REQUIRE( lokimq::from_base64("YWJjZA==") == "abcd" );
+    REQUIRE( lokimq::from_base64("YWJjZA") == "abcd" );
+    REQUIRE( lokimq::from_base64("YWJjZB") == "abcd" ); // ignore superfluous bits
+    REQUIRE( lokimq::from_base64("YWJjZB") == "abcd" ); // ignore superfluous bits
+    REQUIRE( lokimq::from_base64("YWJj+") == "abc" ); // ignore superfluous bits
+    REQUIRE( lokimq::from_base64("YWJjZGU=") == "abcde" );
+    REQUIRE( lokimq::from_base64("YWJjZGU") == "abcde" );
+    REQUIRE( lokimq::from_base64("YWJjZGVm") == "abcdef" );
+
+    REQUIRE( lokimq::is_base64("YWJjZGVm") );
+    REQUIRE( lokimq::is_base64("YWJjZGU") );
+    REQUIRE( lokimq::is_base64("YWJjZGU=") );
+    REQUIRE( lokimq::is_base64("YWJjZA==") );
+    REQUIRE( lokimq::is_base64("YWJjZA") );
+    REQUIRE( lokimq::is_base64("YWJjZB") ); // not really valid, but we explicitly accept it
+
+    REQUIRE_FALSE( lokimq::is_base64("YWJjZ=") ); // invalid padding (padding can only be 4th or 3rd+4th of a 4-char block)
+    REQUIRE_FALSE( lokimq::is_base64("YWJj=") );
+    REQUIRE_FALSE( lokimq::is_base64("YWJj=A") );
+    REQUIRE_FALSE( lokimq::is_base64("YWJjA===") );
+    REQUIRE_FALSE( lokimq::is_base64("YWJ[") );
+    REQUIRE_FALSE( lokimq::is_base64("YWJ.") );
+    REQUIRE_FALSE( lokimq::is_base64("_YWJ") );
+
+    REQUIRE( lokimq::from_base64(
+            "TWFuIGlzIGRpc3Rpbmd1aXNoZWQsIG5vdCBvbmx5IGJ5IGhpcyByZWFzb24sIGJ1dCBieSB0aGlz"
+            "IHNpbmd1bGFyIHBhc3Npb24gZnJvbSBvdGhlciBhbmltYWxzLCB3aGljaCBpcyBhIGx1c3Qgb2Yg"
+            "dGhlIG1pbmQsIHRoYXQgYnkgYSBwZXJzZXZlcmFuY2Ugb2YgZGVsaWdodCBpbiB0aGUgY29udGlu"
+            "dWVkIGFuZCBpbmRlZmF0aWdhYmxlIGdlbmVyYXRpb24gb2Yga25vd2xlZGdlLCBleGNlZWRzIHRo"
+            "ZSBzaG9ydCB2ZWhlbWVuY2Ugb2YgYW55IGNhcm5hbCBwbGVhc3VyZS4=" )
+            ==
+            "Man is distinguished, not only by his reason, but by this singular passion from other "
+            "animals, which is a lust of the mind, that by a perseverance of delight in the "
+            "continued and indefatigable generation of knowledge, exceeds the short vehemence of "
+            "any carnal pleasure.");
+
+    REQUIRE( lokimq::to_base64(pk) == pk_b64 );
+    REQUIRE( lokimq::from_base64(pk_b64) == pk );
+
+    std::vector<std::byte> bytes{{std::byte{0}, std::byte{255}}};
+    std::basic_string_view<std::byte> b{bytes.data(), bytes.size()};
+    REQUIRE( lokimq::to_base64(b) == "AP8=" );
+
+    bytes.resize(4);
+    bytes[0] = std::byte{'/'}; bytes[1] = std::byte{'w'}; bytes[2] = std::byte{'A'}; bytes[3] = std::byte{'='};
+    std::basic_string_view<std::byte> b64_bytes{bytes.data(), bytes.size()};
+    REQUIRE( lokimq::is_base64(b64_bytes) );
+    REQUIRE( lokimq::from_base64(b64_bytes) == "\xff\x00"sv );
 }
